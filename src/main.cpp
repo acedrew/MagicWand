@@ -38,7 +38,7 @@ void dmpDataReady()
 #define CHIPSET     WS2812
 #define NUM_LEDS    15
 
-#define BRIGHTNESS  200
+#define BRIGHTNESS  64
 #define FRAMES_PER_SECOND 60
 
 // COOLING: How much does the air cool as it rises?
@@ -52,6 +52,12 @@ void dmpDataReady()
 #define SPARKING 120
 CRGBPalette256 gPal;
 bool gReverseDirection = false;
+uint8_t currentMode = 1;
+uint8_t touchStatus = 0;
+int touchTime = 0;
+uint8_t touchCounter = 1;
+
+#define TOUCH_THRESHOLD 40
 
 CRGB leds[NUM_LEDS];
 void Fire2012WithPalette(uint8_t modulus)
@@ -91,8 +97,37 @@ void Fire2012WithPalette(uint8_t modulus)
     }
 }
 
+void IRAM_ATTR touch14() {
+  noInterrupts();
+  if (touchStatus & 2){
+    touchCounter++;
+    touchStatus = 0;
+  } else {
+    touchTime = millis();
+    touchStatus = touchStatus | 1; 
+  }
+  interrupts();
+}
+void IRAM_ATTR touch13() {
+  noInterrupts();
+    touchTime = millis();
+    touchStatus = touchStatus & 2; 
+  interrupts();
+}
+void IRAM_ATTR touch12() {
+  noInterrupts();
+  if (touchStatus & 1){
+    touchCounter--;
+    touchStatus = 0;
+  } else {
+    touchTime = millis();
+    touchStatus = touchStatus | 2; 
+  }
+  interrupts();
+}
 
 void setup() {
+  pinMode(0, INPUT_PULLUP);
   Serial.begin(115200);
     pinMode(MPU_PWR_PIN, OUTPUT);
   digitalWrite(MPU_PWR_PIN, LOW);
@@ -153,11 +188,23 @@ void setup() {
   FastLED.addLeds<CHIPSET, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
   FastLED.setBrightness( BRIGHTNESS );
   gPal = RainbowColors_p;
+  touchAttachInterrupt(T9, touch14, TOUCH_THRESHOLD);
+  // touchAttachInterrupt(T4, touch13, 255);
+  touchAttachInterrupt(T5, touch12, TOUCH_THRESHOLD + 10);
 
   // put your setup code here, to run once:
 }
 
 void loop() {
+  // Serial.println(currentMode);
+  if (touchTime + 300 < millis() & touchStatus > 0) {
+    touchStatus = 0;
+  } else if (touchStatus > 0) {
+    Serial.print("touch detected ");
+    Serial.print(touchStatus);
+    Serial.print(" ");
+    Serial.println(touchCounter);
+  }
     // random16_add_entropy( random());
 
   // Fourth, the most sophisticated: this one sets up a new palette every
@@ -175,15 +222,15 @@ void loop() {
     if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) { 
     mpu.dmpGetQuaternion(&qt, fifoBuffer);
     mpu.dmpGetGravity(&gravity, &qt);
-    mpu.dmpGetYawPitchRoll(ypr, &qt, &gravity);
-    Serial.print("\n");
-    Serial.print(qt.w);
-    Serial.print(" ");
-    Serial.print(qt.x);
-    Serial.print(" ");
-    Serial.print(qt.y);
-    Serial.print(" ");
-    Serial.print(qt.z);
+    // mpu.dmpGetYawPitchRoll(ypr, &qt, &gravity);
+    // Serial.print("\n");
+    // Serial.print(qt.w);
+    // Serial.print(" ");
+    // Serial.print(qt.x);
+    // Serial.print(" ");
+    // Serial.print(qt.y);
+    // Serial.print(" ");
+    // Serial.print(qt.z);
     // Serial.print("\t");
     // Serial.print(ypr[1] * 180 / PI);
     // Serial.print("\t");
@@ -192,11 +239,41 @@ void loop() {
     }
   // Fire2012WithPalette((uint8_t)(qt.w * 127)); // run simulation frame, using palette colors
   
-  for(int i=0;i<NUM_LEDS;i++){
-    leds[i] = gPal[i+((uint8_t)(abs(qt.w*127)))];
+  if(digitalRead(0)) { 
+    switch(currentMode) {
+      case 0:
+        for(int i=0;i<NUM_LEDS;i++){
+          leds[i] = gPal[i+((uint8_t)(abs(qt.w*255)))];
+        }
+        break;
+      case 1:
+        for(int i=0;i<NUM_LEDS;i++){
+          leds[i] = gPal[(i*touchCounter)+((uint8_t)(abs(qt.w*127)))];
+        }
+        break;
+      case 2:
+       Fire2012WithPalette((uint8_t)(abs(qt.w*255)));
+       break;
+      default:
+        for(int i=0;i<NUM_LEDS;i++){
+          leds[i] = gPal[i+((uint8_t)(abs(qt.w*127)))];
+        }
+        break;
+    }
+        
+
+  } else {
+    currentMode = (uint8_t)(abs(qt.w*15));
+    for(int i=0;i<NUM_LEDS;i++){
+      if (i < currentMode) {
+        leds[i] = gPal[i+((uint8_t)(abs(qt.w*127)))];
+      } else {
+        leds[i] = 0;
+      }
+    }
   }
-  FastLED.show(); // display this frame
-  FastLED.delay(1000 / FRAMES_PER_SECOND);
+    FastLED.show(); // display this frame
+    FastLED.delay(1000 / FRAMES_PER_SECOND);
 
   // put your main code here, to run repeatedly:
 }
